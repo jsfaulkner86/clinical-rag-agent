@@ -56,24 +56,5 @@ Built by [John Faulkner](https://linkedin.com/in/johnathonfaulkner), Agentic AI 
 - FHIR patient context integration for personalized recommendations
 - Confidence scoring on retrieved guideline matches
 
-flowchart TD
-    A[👤 Clinician Query] --> B[LangChain Query Handler]
-    B --> C{Query Type}
-    C -->|Guideline lookup| D[Embedding Model\nopenai/text-embedding-3]
-    C -->|Direct question| E[LLM Chain\nGPT-4o]
-    D --> F[(ChromaDB\nVector Store)]
-    F --> G[Top-K Chunk Retrieval]
-    G --> H[Context Injection\nPrompt Builder]
-    H --> E
-    E --> I[Grounded Response\nwith Citations]
-    I --> J[Streamlit UI]
-
-    subgraph Knowledge Base
-        K[CMS Guidelines PDF] --> L[Document Loader]
-        L --> M[Text Splitter\nchunk_size=500]
-        M --> D
-    end
-
-
 ---
 *Part of a portfolio of healthcare agentic AI systems. See all projects at [github.com/jsfaulkner86](https://github.com/jsfaulkner86)*
