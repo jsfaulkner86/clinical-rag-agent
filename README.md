@@ -1,21 +1,54 @@
-# Clinical RAG Agent
+<div align="center">
 
-> **LangChain + Chroma** — Clinical guidelines at point of care, retrieved in real time
+<br />
 
-[![Python](https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white)]()
-[![LangChain](https://img.shields.io/badge/LangChain-000000?style=flat-square)]()
-[![Chroma](https://img.shields.io/badge/Chroma-Vector%20DB-green?style=flat-square)]()
-[![Healthcare AI](https://img.shields.io/badge/Healthcare-AI-red?style=flat-square)]()
+# 📚 Clinical RAG Agent
 
-Built by [The Faulkner Group](https://thefaulknergroupadvisors.com) — informed by clinical workflow design across 12 Epic enterprise health systems.
+**Clinicians can't memorize every guideline.**
+**At the point of care, a literature search takes 45 minutes they don't have.**
+**Static EHR reference tools are outdated, rigid, and not queryable in natural language.**
+
+This agent solves that with a **LangChain RAG pipeline over ingested clinical guideline documents** —
+natural language clinical queries, retrieved guideline sections with source citations,
+concise actionable recommendations in seconds.
+
+<br />
+
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
+[![LangChain](https://img.shields.io/badge/LangChain-RAG%20Pipeline-000000?style=flat-square)](https://langchain.com)
+[![Chroma](https://img.shields.io/badge/Chroma-Vector%20DB-22c55e?style=flat-square)](https://trychroma.com)
+[![ACOG](https://img.shields.io/badge/ACOG%2FSMFM-Guideline%20Corpus-E91E8C?style=flat-square)]()
+[![HIPAA](https://img.shields.io/badge/HIPAA-PHI%20Boundary%20Enforced-0EA5E9?style=flat-square)]()
+[![License](https://img.shields.io/badge/License-MIT-gray?style=flat-square)](LICENSE)
+
+<br />
+
+[Architecture](#system-architecture) · [Corpus Setup](#corpus-recommendations) · [Chunking Strategy](#rag-pipeline-configuration) · [Audit Trail](#audit-event-lifecycle) · [Quick Start](#local-development)
+
+<br />
+
+</div>
 
 ---
 
-## Problem Statement
+## The Real Problem
 
-Clinicians cannot memorize every clinical guideline, protocol, or evidence update. At the point of care, a literature search takes 45 minutes they don't have. Static EHR-embedded reference tools are outdated, rigid, and not queryable in natural language.
+I've designed clinical workflow systems across 12 enterprise Epic health systems. The same gap exists at all of them: EHR-embedded clinical reference tools that haven't been updated in years, locked to a search paradigm that requires knowing the exact right term.
 
-This agent solves that with a RAG pipeline over ingested clinical guideline documents — accepting natural language clinical queries, retrieving relevant guideline sections with source citations, and returning concise, actionable recommendations in seconds.
+When an OB is deciding on PPH prophylaxis at 2am, they need the ACOG recommendation — not a keyword search of a PDF library from 2019. This pipeline makes institutional clinical knowledge queryable, auditable, and grounded — every response traceable to a source document.
+
+---
+
+## What It Does
+
+| Manual Workflow | This Agent |
+|---|---|
+| Open browser, navigate to ACOG, search keyword | Natural language query — retrieves relevant guideline sections instantly |
+| Hope the right document surfaces | Top-k cosine similarity retrieval with score logging |
+| Read full PDF section, synthesize recommendation | GPT-4o synthesizes concise recommendation from retrieved context only |
+| Citation: none | Source guideline filenames cited on every response |
+| Zero audit trail | Append-only `rag_audit_log` — every query, retrieval, and response recorded |
+| Stale embedded EHR content | Corpus refresh on your schedule; version-stamped embeddings |
 
 ---
 
@@ -33,7 +66,6 @@ This agent solves that with a RAG pipeline over ingested clinical guideline docu
 │              Chroma Vector Store                                │
 │  text-embedding-3-small · cosine similarity · persistent       │
 └─────────────────────────────┬───────────────────────────────────┘
-                              │
                               │ Retrieval query
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
@@ -72,6 +104,70 @@ This agent solves that with a RAG pipeline over ingested clinical guideline docu
 
 ---
 
+## RAG Pipeline Configuration
+
+### Chunking Strategy
+
+Clinical guideline documents require specific chunking decisions:
+
+| Parameter | Value | Rationale |
+|---|---|---|
+| `chunk_size` | 512 tokens | Preserves clinical recommendation context without splitting dosage/criteria mid-sentence |
+| `chunk_overlap` | 64 tokens | Prevents recommendation truncation at chunk boundaries |
+| `splitter` | `RecursiveCharacterTextSplitter` | Respects paragraph and sentence structure |
+| `top_k` | 4 | Balances context window usage vs. retrieval recall |
+| `similarity_threshold` | 0.70 | Queries below this score flagged for manual review |
+
+### Corpus Recommendations
+
+Priority guideline sources for a maternal health deployment:
+
+- **ACOG Practice Bulletins** — OB/GYN clinical guidelines (PDF)
+- **SMFM Consult Series** — Maternal-Fetal Medicine protocols
+- **USPSTF Recommendations** — Preventive care thresholds
+- **AHA/ACC Guidelines** — Cardiovascular risk in pregnancy
+- **Custom institutional protocols** — Exported from Epic as PDFs
+
+> ⚠️ Pre-ingest PHI scan required before indexing any institutional document. Use Presidio or AWS Comprehend Medical to screen documents before embedding.
+
+---
+
+## Audit Event Lifecycle
+
+```
+query_received
+    └── embedding_generated
+            └── retrieval_completed
+                    └── rerank_completed (optional)
+                            └── context_assembled
+                                    └── llm_call_started
+                                            └── llm_call_completed
+                                                    └── response_delivered
+                                                    └── no_results_found
+                                                    └── query_failed
+```
+
+**Key audit analytics:**
+
+- `get_top_cited_guidelines()` — which documents are actually being used; prune or refresh stale ones
+- `get_retrieval_quality_summary()` — avg top cosine score, avg chunks retrieved, no-result rate
+- `get_query_trail(query_id)` — full lifecycle trace per query for debugging low-quality responses
+
+---
+
+## Technology Stack
+
+| Layer | Technology | Rationale |
+|---|---|---|
+| **Retrieval Framework** | LangChain | Standard RAG chain primitives; `RetrievalQA` with source documents |
+| **Vector Store** | Chroma | Persistent local vector DB; zero infrastructure overhead for development |
+| **Embeddings** | OpenAI text-embedding-3-small | Best cost/quality ratio for clinical text; 1536-dimension output |
+| **LLM** | OpenAI GPT-4o | Synthesis and clinical reasoning over retrieved context only |
+| **Audit Store** | PostgreSQL + asyncpg | Append-only query event log with guideline source array indexing |
+| **Language** | Python 3.11+ | Async-native; type hints throughout |
+
+---
+
 ## Repository Structure
 
 ```
@@ -93,70 +189,11 @@ clinical-rag-agent/
 
 ---
 
-## Technology Stack
-
-| Layer | Technology | Rationale |
-|---|---|---|
-| **Retrieval Framework** | LangChain | Standard RAG chain primitives; `RetrievalQA` with source documents |
-| **Vector Store** | Chroma | Persistent local vector DB; zero infrastructure overhead for development |
-| **Embeddings** | OpenAI text-embedding-3-small | Best cost/quality ratio for clinical text; 1536-dimension output |
-| **LLM** | OpenAI GPT-4o | Synthesis and clinical reasoning over retrieved context |
-| **Audit Store** | PostgreSQL + asyncpg | Append-only query event log with guideline source array indexing |
-| **Language** | Python 3.11+ | Async-native; type hints throughout |
-
----
-
-## RAG Pipeline Configuration
-
-### Chunking Strategy
-
-Clinical guideline documents require specific chunking decisions:
-
-| Parameter | Recommended Value | Rationale |
-|---|---|---|
-| `chunk_size` | 512 tokens | Preserves clinical recommendation context without splitting dosage/criteria mid-sentence |
-| `chunk_overlap` | 64 tokens | Prevents recommendation truncation at chunk boundaries |
-| `splitter` | `RecursiveCharacterTextSplitter` | Respects paragraph and sentence structure |
-| `top_k` | 4 | Balances context window usage vs. retrieval recall |
-
-### Corpus Recommendations
-
-Priority guideline sources for a maternal health deployment:
-- **ACOG Practice Bulletins** — OB/GYN clinical guidelines (PDF)
-- **SMFM Consult Series** — Maternal-Fetal Medicine protocols
-- **USPSTF Recommendations** — Preventive care thresholds
-- **AHA/ACC Guidelines** — Cardiovascular risk in pregnancy
-- **Custom institutional protocols** — Exported from Epic as PDFs
-
----
-
-## Audit Event Lifecycle
-
-```
-query_received
-    └── embedding_generated
-            └── retrieval_completed
-                    └── rerank_completed (optional)
-                            └── context_assembled
-                                    └── llm_call_started
-                                            └── llm_call_completed
-                                                    └── response_delivered
-                                                    └── no_results_found
-                                                    └── query_failed
-```
-
-**Key audit analytics available:**
-- `get_top_cited_guidelines()` — which documents are actually being used; prune or refresh stale ones
-- `get_retrieval_quality_summary()` — avg top cosine score, avg chunks retrieved, no-result rate; tracks RAG quality over time
-- `get_query_trail()` — full lifecycle trace per query for debugging low-quality responses
-
----
-
 ## Compliance Posture
 
 - **PHI boundary:** Raw clinical queries must never include patient identifiers. The `raw_query` audit field is for de-identified query text only. If integrating with a live EHR for patient-specific context, inject FHIR-retrieved data at synthesis time via a separate prompt layer — never index it.
 - **Audit trail:** `rag_audit_log` is append-only. Tracks every query, which guidelines were cited, and whether results were found — satisfying documentation requirements for AI-assisted clinical decision support tools under state medical board guidance.
-- **FHIR integration path:** Connect patient context via `ehr-mcp` tools rather than embedding raw FHIR data in the vector store.
+- **FHIR integration path:** Connect patient context via [`ehr-mcp`](https://github.com/jsfaulkner86/ehr-mcp) tools rather than embedding raw FHIR data in the vector store.
 
 ---
 
@@ -189,14 +226,31 @@ pytest tests/ -v
 
 ---
 
-## What's Next
+## Roadmap
 
-- Specialty-specific guideline collections (maternal health, cardiology, endocrinology)
-- FHIR patient context injection for personalized recommendations via `ehr-mcp`
-- Confidence scoring on retrieved chunks with threshold-based fallback
-- Re-ranking layer (Cohere Rerank or cross-encoder)
-- Hybrid search: BM25 + dense vector for clinical keyword precision
+- [ ] Specialty-specific guideline collections (maternal health, cardiology, endocrinology)
+- [ ] FHIR patient context injection for personalized recommendations via `ehr-mcp`
+- [ ] Confidence scoring on retrieved chunks with threshold-based fallback
+- [ ] Re-ranking layer (Cohere Rerank or cross-encoder)
+- [ ] Hybrid search: BM25 + dense vector for clinical keyword precision
+- [ ] LangSmith tracing integration
 
 ---
 
+## If You're Building Healthcare AI
+
+If this pattern is useful to you, a ⭐ helps others find it.
+
+If you're building clinical AI and need a RAG architecture grounded in real EHR workflow context — this is the kind of system I design at [The Faulkner Group](https://thefaulknergroupadvisors.com).
+
+> ⚠️ See [DISCLAIMER.md](./DISCLAIMER.md) for important limitations on corpus staleness, PHI vector store boundaries, and production deployment requirements.
+
+---
+
+<div align="center">
+
 *Part of The Faulkner Group's healthcare agentic AI portfolio → [github.com/jsfaulkner86](https://github.com/jsfaulkner86)*
+
+*Built from 14 years and 12 Epic enterprise health system deployments.*
+
+</div>
